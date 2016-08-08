@@ -59,7 +59,7 @@ class TaskManager:
 
 class Downloader:
     file_size = 0
-    _cache_file = 'cache'
+    _error_cache = 'error_cache'
 
     def up(self, size):
         self.file_size += size
@@ -71,7 +71,8 @@ class Downloader:
         try:
             file = request.urlopen(url)
             return file.length
-        except Exception:
+        except Exception as e:
+            print(e)
             return 0
 
     @th_pool.thread
@@ -86,11 +87,13 @@ class Downloader:
 
         print('\nЗагрузка файла {} начата'.format(file_path))
         try:
+            if file_size == 0:
+                raise Exception('Не удалось получить размер файла!')
             request.urlretrieve(url=url, filename=file_path)
         except Exception as e:
             error = e
-            with open(self._cache_file, 'a') as f:
-                f.write('{}|{}\n'.format(list(file_path.split('/')).pop(), url))
+            with open(self._error_cache, 'a') as f:
+                f.write('{}\n'.format(url))
         finally:
             print(messages[bool(error)].format(file_path, error))
             th_pool.lock.acquire()
