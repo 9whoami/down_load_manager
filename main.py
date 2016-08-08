@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import re
+import sys
 from os import listdir, mkdir, path
 from time import sleep
 from urllib import request
@@ -8,7 +9,7 @@ from progressbar import ProgressBar
 
 from threadpool import ThreadPool
 
-th_pool = ThreadPool(max_threads=3)
+th_pool = ThreadPool(max_threads=sys.argv[1] if len(sys.argv) > 1 else 2)
 
 
 class TaskManager:
@@ -67,6 +68,7 @@ class Downloader:
     def down(self, size):
         self.file_size -= size
 
+    @staticmethod
     def get_url_size(self, url):
         try:
             file = request.urlopen(url)
@@ -111,6 +113,7 @@ class ProgressManager(ProgressBar):
 
     cur_size = 0
 
+    @staticmethod
     def get_file_size(self, filename):
         try:
             if path.exists(filename):
