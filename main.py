@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import re
 from os import listdir, mkdir, path
+from time import sleep
 from urllib import request
 from progressbar import ProgressBar
 
@@ -11,8 +13,7 @@ th_pool = ThreadPool(max_threads=3)
 
 class TaskManager:
     tasks_dir = 'tasks'
-    download_file = None
-    files = [] # list()
+    files = []
 
     def get_all_tasks(self):
         self.files = listdir(self.tasks_dir)
@@ -20,54 +21,51 @@ class TaskManager:
     def __iter__(self):
         return self.get_url()
 
+    @staticmethod
+    def get_name(line):
+        query_string = request.unquote(line).split('?')[1].split('&')
+        query_parameters = {key.split('=')[0]: key.split('=')[1] for key in query_string}
+        try:
+            ext = query_parameters['mime'].split('/').pop()
+            name = re.sub(r'\s+', '_', query_parameters['title'])
+        except KeyError:
+            return line.split('?')[0].split('/').pop()
+        else:
+            return '{}.{}'.format(name, ext)
+
     def get_url(self):
         for i, file in enumerate(self.files, 1):
             print('\nОбрабатываем файл {} из {}'.format(i, len(self.files)))
             with open('{}/{}'.format(self.tasks_dir, file), 'r') as f:
                 links = f.read().split('\n')
-
+            download_dir = re.sub(r'\s+', '_', file)
             for j, link in enumerate(links, 1):
-                print('\nОбрабатываем урл {} из {}'.format(i, len(links)))
-                filename, url = link.split('|')
+                print('\nОбрабатываем урл {} из {}'.format(j, len(links)))
+
+                if link:
+                    filename = self.get_name(link)
+                else:
+                    continue
+
+                url = link
+
                 try:
-                    mkdir(file)
+                    mkdir(download_dir)
                 except IOError:
                     pass
-                self.download_file = '{}/{}'.format(file, filename)
-                yield url
+                file_path = '{}/{}'.format(download_dir, filename)
+                yield url, file_path
 
 
 class Downloader:
-    file_path = ''
-    file_total_size = 0
     file_size = 0
+    _cache_file = 'cache'
 
-    @th_pool.thread
-    def download(self, file_path: str, url: str):
-        self.file_path = file_path
+    def up(self, size):
+        self.file_size += size
 
-        messages = {False: '\nЗагрузка файла {} завершена', True: '\nПри загрузке файла {} возникло исключение с сообщением: {}'}
-        error = None
-
-        print('\nЗагрузка файла {} начата'.format(self.file_path))
-        try:
-            request.urlretrieve(url=url, filename=self.file_path)
-        except Exception as e:
-            error = e
-        finally:
-            print(messages[bool(error)].format(self.file_path, error))
-            return
-
-
-class ProgressManager(ProgressBar):
-    downloads = {}
-    enabled = False
-
-    def re_init(self):
-        super().__init__(max_value=self.max_size, min_value=0)
-
-    max_size = 0
-    cur_size = 0
+    def down(self, size):
+        self.file_size -= size
 
     def get_url_size(self, url):
         try:
@@ -75,6 +73,40 @@ class ProgressManager(ProgressBar):
             return file.length
         except Exception:
             return 0
+
+    @th_pool.thread
+    def download(self, file_path: str, url: str):
+        th_pool.lock.acquire()
+        file_size = self.get_url_size(url=url)
+        self.up(file_size)
+        th_pool.lock.release()
+
+        messages = {False: '\nЗагрузка файла {} завершена', True: '\nПри загрузке файла {} возникло исключение с сообщением: {}'}
+        error = None
+
+        print('\nЗагрузка файла {} начата'.format(file_path))
+        try:
+            request.urlretrieve(url=url, filename=file_path)
+        except Exception as e:
+            error = e
+            with open(self._cache_file, 'a') as f:
+                f.write('{}|{}\n'.format(list(file_path.split('/')).pop(), url))
+        finally:
+            print(messages[bool(error)].format(file_path, error))
+            th_pool.lock.acquire()
+            self.down(file_size)
+            th_pool.lock.release()
+            return
+
+
+class ProgressManager(ProgressBar):
+    downloads = {}
+    enabled = False
+
+    def re_init(self, max_size):
+        super().__init__(max_value=max_size, min_value=0)
+
+    cur_size = 0
 
     def get_file_size(self, filename):
         try:
@@ -87,42 +119,42 @@ class ProgressManager(ProgressBar):
     def view_progress(self):
         while self.enabled:
             try:
-                max_size = 0
+                max_size = downloader.file_size
                 cur_size = 0
                 for thread in th_pool.pool:
                     try:
                         file_path = thread._kwargs['file_path']
-                        url = thread._kwargs['url']
-                    except Exception as e:
+                    except Exception:
                         continue
-                    max_size += self.get_url_size(url)
                     cur_size += self.get_file_size(file_path)
 
                 if max_size != self.max_value:
-                    self.re_init()
+                    self.re_init(max_size)
                 if cur_size != self.cur_size:
-                    self.update(self.cur_size)
+                    self.update(cur_size)
 
-                self.cur_size, self.max_size = cur_size, max_size
-
-            except Exception as e:
+                self.cur_size = cur_size
+            except Exception:
                 continue
         return
 
 
-tm = TaskManager()
-dm = Downloader()
-pb = ProgressManager()
+tasks = TaskManager()
+downloader = Downloader()
+progress = ProgressManager()
 
-tm.get_all_tasks()
-pb.enabled = True
-pb.view_progress()
+tasks.get_all_tasks()
+progress.enabled = True
+progress.view_progress()
 
-for url in tm:
-    dm.download(file_path=tm.download_file, url=url)
+for url, filename in tasks:
+    downloader.download(file_path=filename, url=url)
 
-while True:
-    if th_pool.cur_count == 1:
-        break
+    if th_pool.cur_count == th_pool.MAX_THREADS:
+        while th_pool.cur_count != 1:
+            sleep(1)
 
-pb.enabled = False
+while th_pool.cur_count != 1:
+    sleep(1)
+
+progress.enabled = False
