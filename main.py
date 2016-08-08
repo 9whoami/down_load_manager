@@ -14,6 +14,7 @@ th_pool = ThreadPool(max_threads=sys.argv[1] if len(sys.argv) > 1 else 2)
 
 class TaskManager:
     tasks_dir = 'tasks'
+    root_dir = '/home/oem/Видео'
     files = []
 
     def get_all_tasks(self):
@@ -54,7 +55,7 @@ class TaskManager:
                     mkdir(download_dir)
                 except IOError:
                     pass
-                file_path = '{}/{}'.format(download_dir, filename)
+                file_path = '{}/{}/{}'.format(self.root_dir, download_dir, filename)
                 yield url, file_path
 
 
