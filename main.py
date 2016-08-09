@@ -9,13 +9,14 @@ from progressbar import ProgressBar
 
 from threadpool import ThreadPool
 
-th_pool = ThreadPool(max_threads=sys.argv[1] if len(sys.argv) > 1 else 2)
+th_pool = ThreadPool(max_threads=int(sys.argv[1]) if len(sys.argv) > 1 else 2)
 
 
 class TaskManager:
     tasks_dir = 'tasks'
     root_dir = '/home/oem/Видео'
     files = []
+    _tasks = []
 
     def get_all_tasks(self):
         self.files = listdir(self.tasks_dir)
@@ -26,7 +27,11 @@ class TaskManager:
     @staticmethod
     def get_name(line):
         query_string = request.unquote(line).split('?')[1].split('&')
-        query_parameters = {key.split('=')[0]: key.split('=')[1] for key in query_string}
+        try:
+            query_parameters = {key.split('=')[0]: key.split('=')[1] for key in query_string if '=' in key}
+        except:
+            print(line)
+            raise SystemExit
         try:
             ext = query_parameters['mime'].split('/').pop()
             name = re.sub(r'\s+', '_', query_parameters['title'])
@@ -37,13 +42,10 @@ class TaskManager:
 
     def get_url(self):
         for i, file in enumerate(self.files, 1):
-            print('\nОбрабатываем файл {} из {}'.format(i, len(self.files)))
             with open('{}/{}'.format(self.tasks_dir, file), 'r') as f:
                 links = f.read().split('\n')
             download_dir = re.sub(r'\s+', '_', file)
             for j, link in enumerate(links, 1):
-                print('\nОбрабатываем урл {} из {}'.format(j, len(links)))
-
                 if link:
                     filename = self.get_name(link)
                 else:
@@ -52,11 +54,15 @@ class TaskManager:
                 url = link
 
                 try:
-                    mkdir(download_dir)
+                    mkdir('{}/{}'.format(self.root_dir, download_dir))
                 except IOError:
                     pass
                 file_path = '{}/{}/{}'.format(self.root_dir, download_dir, filename)
-                yield url, file_path
+                self._tasks.append((url, file_path,))
+
+        for i, task in enumerate(self._tasks, 1):
+            print('Загружаем {} из {}'.format(i, len(self._tasks)))
+            yield task
 
 
 class Downloader:
@@ -70,7 +76,7 @@ class Downloader:
         self.file_size -= size
 
     @staticmethod
-    def get_url_size(self, url):
+    def get_url_size(url):
         try:
             file = request.urlopen(url)
             return file.length
